@@ -39,18 +39,13 @@ import sys
 #-----------------------------------------------------------------------------------------------------------
 
 PSR_name: str = "B1937+21"     # Name of the pulsar
-plot_fits: bool = False         # Plot the pre-fit and post-fit residuals
-simulations: bool = False      # Running on simulated data (as opposed to real data)
+plot_fits: bool = False        # Plot the pre-fit and post-fit residuals
 order: int = 6                 # Order (number of terms) of the IFD/LIFD polynomial
 change_dm: bool = True         # Override the par-file DM with a previously fitted value
 
 # Input files
-if simulations:
-    parfile: str = f"./simulations/simplified_timing_model_pint.par"
-    timfile: str = f"./simulations/timfile_freq_nofreqev.tim"
-else:
-    parfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.1.0/narrowband/par/{PSR_name}_PINT_*.nb.par")[0]
-    timfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.1.0/narrowband/tim/{PSR_name}_PINT_*.nb.tim")[0]
+parfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.1.0/narrowband/par/{PSR_name}_PINT_*.nb.par")[0]
+timfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.1.0/narrowband/tim/{PSR_name}_PINT_*.nb.tim")[0]
 
 # Set up the comparison plot
 sns.set_context("paper", font_scale=1.50, rc={"lines.linewidth": 2.5})
@@ -67,14 +62,9 @@ for i, method in enumerate(["FD", "IFD", "LIFD"]):
 
     print(f"Running {method}")
 
-    if simulations:
-        timing_model = get_model(parfile, allow_tcb=True)  # allow_tcb because the simulations are made in Tempo2
-        toas = get_TOAs(timfile, planets=True, model=timing_model, include_bipm=True)
-        mask_pint = toas.get_mjds() < 58484.0 * u.day  # Mask later TOAs with unreliable clock corrections
-        toas = toas[mask_pint]
-    else:
-        timing_model = get_model(parfile)  # Ecliptic coordinates
-        toas = get_TOAs(timfile, planets=True, ephem=timing_model.EPHEM.value)  # Load TOAs
+
+    timing_model = get_model(parfile)  # Ecliptic coordinates
+    toas = get_TOAs(timfile, planets=True, ephem=timing_model.EPHEM.value)  # Load TOAs
 
     if plot_fits:
         # Pre-fit residuals, with no model changes yet
@@ -194,23 +184,6 @@ for i, method in enumerate(["FD", "IFD", "LIFD"]):
     new_dmx_dispersion_delays_us = new_DMX_component.DMX_dispersion_delay(toas).to(u.us)
     new_dmx_dispersion_delay_means = np.array([new_dmx_dispersion_delays_us.value[freq_rounded == f].mean() for f in unique_freqs])
     new_dmx_dispersion_delay_means -= np.mean(new_dmx_dispersion_delay_means)
-
-    if simulations:
-        # Compare the recovered profile-evolution delay, dispersive delay, and their sum
-        total_delay_sim = new_dmx_dispersion_delay_means + prof_evol_delay_us.value
-
-        fig_aux, ax_aux = plt.subplots(1, 1)
-        ax_aux.plot(unique_freqs, prof_evol_delay_us, label="Profile Evolution", ls='--', color="C0")
-        ax_aux.plot(unique_freqs, new_dmx_dispersion_delay_means, label="DMX", ls=':', color="C1")
-        ax_aux.plot(unique_freqs, total_delay_sim, label="Total", ls='-', color="C2")
-        ax_aux.set_xlabel("$\\nu$ [GHz]")
-        ax_aux.set_ylabel("Delay [us]")
-        plt.title(method)
-        plt.tight_layout()
-        plt.legend()
-        plt.savefig(f"./results/{method}_simulation_nofreqeq_timing_delays.png")
-        plt.show()
-        plt.close(fig_aux)
 
     #-----------------------------------------------------------------------------------------------------------
     # Save the fitted DMX parameters
