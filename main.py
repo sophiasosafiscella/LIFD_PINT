@@ -108,17 +108,26 @@ for i, method in enumerate(["FD", "IFD", "LIFD"]):
     if method == "IFD" or method == "LIFD":
         timing_model.remove_component("FD")
 
-        # LIFD defines its λ→x mapping at setup(), which requires TOAs, so attach them to the model beforehand.
-        timing_model.toas = toas
-
         if method == "IFD":
             from IFD_class import IFD
-            timing_model.add_component(IFD(order=order))
-            freeze_parameters(timing_model, ['IFD0'])  # AIC indicates this term does not matter
+
+            if "IFD" not in timing_model.components:
+                timing_model.add_component(IFD(order=order))
+                freeze_parameters(timing_model, ['IFD0'])  # AIC indicates this term does not matter
 
         elif method == "LIFD":
             from LIFD_class import LIFD
-            timing_model.add_component(LIFD(order=order))
+
+            if "LIFD" not in timing_model.components:
+                timing_model.add_component(LIFD(order=order))
+            lifd_comp = timing_model.components["LIFD"]
+
+            # Only fill in bounds that the par file didn't provide
+            freq = LIFD.get_freq_hz_from_toas(timing_model, toas)
+            if lifd_comp.LIFD_FMIN.value is None:
+                lifd_comp.LIFD_FMIN.value = freq.min().to_value(u.Hz)
+            if lifd_comp.LIFD_FMAX.value is None:
+                lifd_comp.LIFD_FMAX.value = freq.max().to_value(u.Hz)
 
     #-----------------------------------------------------------------------------------------------------------
     # Fit the timing model
@@ -126,6 +135,7 @@ for i, method in enumerate(["FD", "IFD", "LIFD"]):
     f = WLSFitter(toas, timing_model)
     f.fit_toas()
     fitted_model = f.model
+    fitted_model.write_parfile(f"./results/{PSR_name}/{method}_timing_model.par")
 
     if plot_fits:
         fig_aux, ax_aux = plot_residuals(toas_mjd_pint, f.resids.time_resids, freqs_pint)
@@ -155,7 +165,7 @@ for i, method in enumerate(["FD", "IFD", "LIFD"]):
         prof_evol_delay_us = get_FD_delay(FD_coeffs, x_var)
 
     elif method == "IFD":
-        x_var = np.sort(IFD.get_lambda_ns_from_freq(freq_GHz))  # Inverse frequencies
+        x_var = IFD.get_lambda_ns_from_freq(freq_GHz)  # Inverse frequencies
         ax.set_xlabel("$\lambda$")
 
         IFD_coeffs = [getattr(fitted_model, f"IFD{deg}").value for deg in range(0, order)]
@@ -165,9 +175,11 @@ for i, method in enumerate(["FD", "IFD", "LIFD"]):
         prof_evol_delay_us = (polyval(x=x_var, c=IFD_coeffs) * u.second).to(u.us)
 
     elif method == "LIFD":
-        lambdas_sec = LIFD.get_lambda_sec_from_freq(freq_GHz)  # Inverse frequencies, in seconds
-        lifd_comp = fitted_model.components["LIFD"]
-        x_var = np.sort(lifd_comp.map_lambda_to_unit(lambdas_sec, lifd_comp.lmin, lifd_comp.lmax))
+        fitted_lifd = fitted_model.components["LIFD"]
+        lmin, lmax = fitted_lifd.lambda_bounds()
+        lambdas_sec = LIFD.get_lambda_sec_from_freq(freq_GHz)
+
+        x_var = fitted_lifd.map_lambda_to_unit(lambdas_sec, lmin, lmax)  # note: no np.sort
         ax.set_xlabel("x")
 
         LIFD_coeffs = [getattr(fitted_model, f"LIFD{i}").value for i in range(0, order)]

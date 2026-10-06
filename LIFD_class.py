@@ -1,5 +1,5 @@
 from pint.models.timing_model import DelayComponent
-from pint.models.parameter import prefixParameter
+from pint.models.parameter import prefixParameter, floatParameter
 import astropy.units as u
 import numpy as np
 
@@ -10,8 +10,6 @@ class LIFD(DelayComponent):
 
     - Global Legendre terms c_k on x ∈ [-1,1], where x is a *fixed* affine map of λ=1/ν.
 
-    Notes:
-      * The λ→x mapping is fixed at setup() using the model's current TOAs, so c_k have a stable definition.
     """
 
     register = True
@@ -22,13 +20,24 @@ class LIFD(DelayComponent):
         Parameters
         ----------
         order : int
-            Highest Legendre degree.
+            Number of terms
         """
 
         super().__init__()
         if order < 0:
             raise ValueError("order must be >= 0")
         self.order = int(order)
+
+        self.add_param(floatParameter(
+            name="LIFD_FMIN", units=u.Hz, value=None, frozen=True,
+            description="Minimum frequency defining the LIFD Legendre mapping",
+            convert_tcb2tdb=False,
+        ))
+        self.add_param(floatParameter(
+            name="LIFD_FMAX", units=u.Hz, value=None, frozen=True,
+            description="Maximum frequency defining the LIFD Legendre mapping",
+            convert_tcb2tdb=False,
+        ))
 
         # Global Legendre coefficients c_0..c_order (seconds)
         for deg in range(0, self.order):
@@ -84,23 +93,24 @@ class LIFD(DelayComponent):
             # Equivalent to 2*((lambdas - min_inv_freq)/(max_inv_freq-min_inv_freq)) - 1
             return 2.0 * (lambdas - 0.5 * (lambda_min + lambda_max)) / (lambda_max - lambda_min)
 
+    @staticmethod
+    def set_freq_bounds(model, toas):
+        """Set LIFD_FMIN/LIFD_FMAX on the model from a set of TOAs."""
+        freq = LIFD.get_freq_hz_from_toas(model, toas)  # Frequencies in Hz
+        model.LIFD_FMIN.value = freq.min().to_value(u.Hz)
+        model.LIFD_FMAX.value = freq.max().to_value(u.Hz)
 
-    # ------------------------------------------------ PINT functions ------------------------------------------------
+    def lambda_bounds(self):
+        fmin, fmax = self.LIFD_FMIN.value, self.LIFD_FMAX.value
+        if fmin is None or fmax is None:
+            raise ValueError("LIFD: LIFD_FMIN and LIFD_FMAX must be set "
+                             "(use LIFD.set_freq_bounds(model, toas)).")
+        return 1.0 / fmax, 1.0 / fmin
+
+        # ------------------------------------------------ PINT functions ------------------------------------------------
     def setup(self):
-        """Fix λ→x mapping."""
         super().setup()
-
-        # Define a FIXED λ→x mapping using model TOAs
-        toas = getattr(self._parent, "toas", None)
-        if toas is None:
-            raise ValueError("Parent model has no TOAs attached at setup().")
-
-        # Set lambda_min, lambda_max from ALL TOAs
-        freq_hz = self.get_freq_hz_from_toas(self._parent, toas)  # Frequencies in Hz
-        lambdas = self.get_lambda_sec_from_freq(freq_hz)  # Inverse frequencies (would be in seconds)
-        self.lmin = lambdas.min()  # lambda_min
-        self.lmax = lambdas.max()  # lambda_max
-
+        self.order = len(self.get_prefix_mapping_component("LIFD"))
 
         # Register derivative functions:
         # - Global Legendre coefficients LIFDk: derivative = L_k(x) (for all TOAs)
@@ -117,7 +127,8 @@ class LIFD(DelayComponent):
 
         freq_hz = self.get_freq_hz_from_toas(self._parent, toas)
         lambdas = self.get_lambda_sec_from_freq(freq_hz)
-        x = self.map_lambda_to_unit(lambdas, self.lmin, self.lmax)  # fixed mapping set in setup()
+        lmin, lmax = self.lambda_bounds()
+        x = self.map_lambda_to_unit(lambdas, lmin, lmax)
 
         delay_sec = np.zeros(len(tbl), dtype=float) * u.second
 
@@ -131,10 +142,8 @@ class LIFD(DelayComponent):
 
     def print_par(self, format="pint"):
         result = ""
-        LIFD_mapping = self.get_prefix_mapping_component("LIFD")
-        for LIFD in LIFD_mapping.values():
-            LIFD_par = getattr(self, LIFD)
-            result += LIFD_par.as_parfile_line(format=format)
+        for pname in self.params:
+            result += getattr(self, pname).as_parfile_line(format=format)
         return result
 
     # ------------------------------------------------ Derivatives ------------------------------------------------
@@ -149,6 +158,7 @@ class LIFD(DelayComponent):
         deg = int(param.replace("LIFD", ""))  # For example, "LIFD3" -> 3
         freq_hz = self.get_freq_hz_from_toas(self._parent, toas)
         lambdas = self.get_lambda_sec_from_freq(freq_hz)
-        x = self.map_lambda_to_unit(lambdas, self.lmin, self.lmax)
+        lmin, lmax = self.lambda_bounds()
+        x = self.map_lambda_to_unit(lambdas, lmin, lmax)
         deriv = self._legendre_val(deg, x)
         return deriv * (u.second / u.second)

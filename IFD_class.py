@@ -17,9 +17,9 @@ class IFD(DelayComponent):
     def __init__(self, order=4):
         """
         Parameters
-        ----------
+        ----------l
         order : int
-            Highest degree.
+            Number of terms
         """
 
         super().__init__()
@@ -69,9 +69,7 @@ class IFD(DelayComponent):
     def setup(self):
         super().setup()
 
-        toas = getattr(self._parent, "toas", None)
-        if toas is None:
-            raise ValueError("Parent model has no TOAs attached at setup().")
+        self.order = len(self.get_prefix_mapping_component("IFD"))
 
         # Register derivative functions:
         for deg in range(0, self.order):
